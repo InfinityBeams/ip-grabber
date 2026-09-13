@@ -1,5 +1,5 @@
 /**
- * IP Grabber — Discord Interactions + Cloudflare Workers
+ * Discord Interactions + Cloudflare Workers
  *
  * Environment variables:
  * DISCORD_PUBLIC_KEY
@@ -16,25 +16,49 @@ const IP_ADDRESSES = [
   "198.51.100.88"
 ];
 
-const COMMAND = {
-  name: "ip",
-  description: "IP utility commands",
-  options: [
-    {
-      type: 1,
-      name: "grabber",
-      description: "Grab an IP address for a selected user",
-      options: [
-        {
-          type: 6,
-          name: "user",
-          description: "Choose a user",
-          required: true
-        }
-      ]
-    }
-  ]
-};
+/* =========================
+   SLASH COMMANDS
+========================= */
+
+const COMMANDS = [
+  {
+    name: "ip",
+    description: "IP utility commands",
+    options: [
+      {
+        type: 1,
+        name: "grabber",
+        description: "Grab an IP address for a selected user",
+        options: [
+          {
+            type: 6,
+            name: "user",
+            description: "Choose a user",
+            required: true
+          }
+        ]
+      }
+    ]
+  },
+
+  {
+    name: "buttonraid",
+    description: "Create a button that sends a message",
+    options: [
+      {
+        type: 3,
+        name: "message",
+        description: "Message to send when the button is clicked",
+        required: true,
+        max_length: 60
+      }
+    ]
+  }
+];
+
+/* =========================
+   HELPERS
+========================= */
 
 function randomItem(array) {
   return array[Math.floor(Math.random() * array.length)];
@@ -57,17 +81,29 @@ function hexToUint8Array(hex) {
   const bytes = new Uint8Array(hex.length / 2);
 
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    bytes[i] = parseInt(
+      hex.slice(i * 2, i * 2 + 2),
+      16
+    );
   }
 
   return bytes;
 }
 
 async function verifyDiscordRequest(request, env) {
-  const signature = request.headers.get("X-Signature-Ed25519");
-  const timestamp = request.headers.get("X-Signature-Timestamp");
+  const signature = request.headers.get(
+    "X-Signature-Ed25519"
+  );
 
-  if (!signature || !timestamp || !env.DISCORD_PUBLIC_KEY) {
+  const timestamp = request.headers.get(
+    "X-Signature-Timestamp"
+  );
+
+  if (
+    !signature ||
+    !timestamp ||
+    !env.DISCORD_PUBLIC_KEY
+  ) {
     return false;
   }
 
@@ -92,160 +128,404 @@ async function verifyDiscordRequest(request, env) {
       new TextEncoder().encode(timestamp + body)
     );
   } catch (error) {
-    console.error("Signature verification failed:", error);
+    console.error(
+      "Signature verification failed:",
+      error
+    );
+
     return false;
   }
 }
 
+/* =========================
+   COMMAND REGISTRATION
+========================= */
+
 async function registerCommands(env) {
-  if (!env.DISCORD_APPLICATION_ID || !env.DISCORD_BOT_TOKEN) {
-    throw new Error("Missing Discord application ID or bot token");
+  if (
+    !env.DISCORD_APPLICATION_ID ||
+    !env.DISCORD_BOT_TOKEN
+  ) {
+    throw new Error(
+      "Missing Discord application ID or bot token"
+    );
   }
 
   const response = await fetch(
     `https://discord.com/api/v10/applications/${env.DISCORD_APPLICATION_ID}/commands`,
     {
       method: "PUT",
+
       headers: {
-        "Authorization": `Bot ${env.DISCORD_BOT_TOKEN}`,
-        "Content-Type": "application/json"
+        "Authorization":
+          `Bot ${env.DISCORD_BOT_TOKEN}`,
+
+        "Content-Type":
+          "application/json"
       },
-      body: JSON.stringify([COMMAND])
+
+      body: JSON.stringify(COMMANDS)
     }
   );
 
   const result = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Discord registration failed: ${result}`);
+    throw new Error(
+      `Discord registration failed: ${result}`
+    );
   }
 
   return result;
 }
 
+/* =========================
+   BUTTON MESSAGE ENCODING
+========================= */
+
+function encodeMessage(message) {
+  return btoa(
+    unescape(
+      encodeURIComponent(message)
+    )
+  );
+}
+
+function decodeMessage(encoded) {
+  return decodeURIComponent(
+    escape(atob(encoded))
+  );
+}
+
+/* =========================
+   WORKER
+========================= */
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Health check
-    if (request.method === "GET" && url.pathname === "/") {
-      return new Response("IP Grabber Worker is online.", {
-        status: 200
-      });
+    /* -------------------------
+       HEALTH CHECK
+    ------------------------- */
+
+    if (
+      request.method === "GET" &&
+      url.pathname === "/"
+    ) {
+      return new Response(
+        "IP Grabber Worker is online.",
+        {
+          status: 200
+        }
+      );
     }
 
-    // Register slash command
-    if (request.method === "GET" && url.pathname === "/register") {
-      const registerSecret = url.searchParams.get("secret");
+    /* -------------------------
+       REGISTER COMMANDS
+    ------------------------- */
+
+    if (
+      request.method === "GET" &&
+      url.pathname === "/register"
+    ) {
+      const registerSecret =
+        url.searchParams.get("secret");
 
       if (
         env.REGISTER_SECRET &&
         registerSecret !== env.REGISTER_SECRET
       ) {
-        return new Response("Unauthorized", { status: 401 });
+        return new Response(
+          "Unauthorized",
+          {
+            status: 401
+          }
+        );
       }
 
       try {
         await registerCommands(env);
 
-        return new Response("Slash command registered successfully.", {
-          status: 200
-        });
+        return new Response(
+          "Slash commands registered successfully.",
+          {
+            status: 200
+          }
+        );
       } catch (error) {
-        return new Response(error.message, {
-          status: 500
-        });
+        return new Response(
+          error.message,
+          {
+            status: 500
+          }
+        );
       }
     }
 
-    // Discord interaction endpoint
+    /* -------------------------
+       DISCORD INTERACTIONS
+    ------------------------- */
+
     if (
       request.method === "POST" &&
       url.pathname === "/interactions"
     ) {
-      const valid = await verifyDiscordRequest(request, env);
+      const valid =
+        await verifyDiscordRequest(
+          request,
+          env
+        );
 
       if (!valid) {
-        return new Response("Invalid request signature", {
-          status: 401
+        return new Response(
+          "Invalid request signature",
+          {
+            status: 401
+          }
+        );
+      }
+
+      const interaction =
+        await request.json();
+
+      /* =========================
+         DISCORD PING
+      ========================= */
+
+      if (interaction.type === 1) {
+        return json({
+          type: 1
         });
       }
 
-      const interaction = await request.json();
+      /* =========================
+         SLASH COMMANDS
+      ========================= */
 
-      // Discord PING verification
-      if (interaction.type === 1) {
-        return json({ type: 1 });
-      }
-
-      // Slash command
       if (interaction.type === 2) {
-        if (interaction.data?.name !== "ip") {
+        const commandName =
+          interaction.data?.name;
+
+        /* -------------------------
+           /ip
+        ------------------------- */
+
+        if (commandName === "ip") {
+          const subcommand =
+            interaction.data.options?.find(
+              option =>
+                option.type === 1 &&
+                option.name === "grabber"
+            );
+
+          if (!subcommand) {
+            return json({
+              type: 4,
+              data: {
+                content:
+                  "Please use `/ip grabber`."
+              }
+            });
+          }
+
+          const userOption =
+            subcommand.options?.find(
+              option =>
+                option.type === 6 &&
+                option.name === "user"
+            );
+
+          const targetUserId =
+            userOption?.value;
+
+          if (!targetUserId) {
+            return json({
+              type: 4,
+              data: {
+                content:
+                  "Please select a user."
+              }
+            });
+          }
+
+          const ip =
+            randomItem(IP_ADDRESSES);
+
           return json({
             type: 4,
+
             data: {
-              content: "Unknown command."
+              embeds: [
+                {
+                  title: "🔍 IP Grabber",
+
+                  description:
+                    `**Target:** <@${targetUserId}>\n` +
+                    `**IP Address:** \`${ip}\`\n\n` +
+                    "✅ IP successfully grabbed!",
+
+                  color: 5793266
+                }
+              ],
+
+              allowed_mentions: {
+                users: []
+              }
             }
           });
         }
 
-        const subcommand = interaction.data.options?.find(
-          option => option.type === 1 && option.name === "grabber"
-        );
+        /* -------------------------
+           /buttonraid
+        ------------------------- */
 
-        if (!subcommand) {
+        if (commandName === "buttonraid") {
+          const messageOption =
+            interaction.data.options?.find(
+              option =>
+                option.type === 3 &&
+                option.name === "message"
+            );
+
+          const message =
+            messageOption?.value;
+
+          if (!message) {
+            return json({
+              type: 4,
+              data: {
+                content:
+                  "Please provide a message."
+              }
+            });
+          }
+
+          /*
+           * Discord custom_id max = 100 chars.
+           * The command limits the message to 60
+           * characters so the encoded value fits.
+           */
+
+          const encoded =
+            encodeMessage(message);
+
           return json({
             type: 4,
+
             data: {
-              content: "Please use `/ip grabber`."
+              embeds: [
+                {
+                  title: "📨 Message Button",
+
+                  description:
+                    "Click the button below to send the message.",
+
+                  color: 5793266
+                }
+              ],
+
+              components: [
+                {
+                  type: 1,
+
+                  components: [
+                    {
+                      type: 2,
+
+                      style: 1,
+
+                      label: "Send Message",
+
+                      emoji: {
+                        name: "📨"
+                      },
+
+                      custom_id:
+                        `buttonraid:${encoded}`
+                    }
+                  ]
+                }
+              ]
             }
           });
         }
-
-        const userOption = subcommand.options?.find(
-          option => option.type === 6 && option.name === "user"
-        );
-
-        const targetUserId = userOption?.value;
-
-        if (!targetUserId) {
-          return json({
-            type: 4,
-            data: {
-              content: "Please select a user."
-            }
-          });
-        }
-
-        const ip = randomItem(IP_ADDRESSES);
 
         return json({
           type: 4,
+
           data: {
-            embeds: [
-              {
-                title: "🔍 IP Grabber",
-                description:
-                  `**Target:** <@${targetUserId}>\n` +
-                  `**IP Address:** \`${ip}\`\n\n` +
-                  "✅ IP successfully grabbed!",
-                color: 5793266
-              }
-            ],
-            allowed_mentions: {
-              users: []
-            }
+            content:
+              "Unknown command."
           }
         });
       }
 
-      return new Response("Unsupported interaction", {
-        status: 400
-      });
+      /* =========================
+         BUTTON INTERACTIONS
+      ========================= */
+
+      if (interaction.type === 3) {
+        const customId =
+          interaction.data?.custom_id;
+
+        if (
+          customId &&
+          customId.startsWith(
+            "buttonraid:"
+          )
+        ) {
+          const encoded =
+            customId.substring(
+              "buttonraid:".length
+            );
+
+          try {
+            const message =
+              decodeMessage(encoded);
+
+            return json({
+              type: 4,
+
+              data: {
+                content: message
+              }
+            });
+          } catch (error) {
+            return json({
+              type: 4,
+
+              data: {
+                content:
+                  "Unable to read the button message."
+              }
+            });
+          }
+        }
+
+        return json({
+          type: 4,
+
+          data: {
+            content:
+              "Unknown button."
+          }
+        });
+      }
+
+      return new Response(
+        "Unsupported interaction",
+        {
+          status: 400
+        }
+      );
     }
 
-    return new Response("Not found", {
-      status: 404
-    });
+    return new Response(
+      "Not found",
+      {
+        status: 404
+      }
+    );
   }
 };
