@@ -181,7 +181,7 @@ function decodeMessage(encoded) {
 ========================= */
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url =
       new URL(request.url);
 
@@ -404,8 +404,58 @@ export default {
               decodeMessage(encoded);
 
             /*
-             * No flags: 64 here.
-             * Therefore this message is PUBLIC.
+             * Randomize how many times to send: 3, 4, or 5.
+             */
+            const times =
+              Math.floor(Math.random() * 3) + 3;
+
+            const applicationId =
+              interaction.application_id;
+
+            const interactionToken =
+              interaction.token;
+
+            /*
+             * Send the remaining messages (times - 1)
+             * as follow-up webhook messages after
+             * replying with the first one.
+             */
+            ctx.waitUntil(
+              (async () => {
+                for (
+                  let i = 1;
+                  i < times;
+                  i++
+                ) {
+                  try {
+                    await fetch(
+                      `https://discord.com/api/v10/webhooks/${applicationId}/${interactionToken}`,
+                      {
+                        method: "POST",
+
+                        headers: {
+                          "Content-Type":
+                            "application/json"
+                        },
+
+                        body: JSON.stringify({
+                          content: message
+                        })
+                      }
+                    );
+                  } catch (err) {
+                    console.error(
+                      "Follow-up message failed:",
+                      err
+                    );
+                  }
+                }
+              })()
+            );
+
+            /*
+             * First message goes as the immediate
+             * interaction response.
              */
 
             return json({
