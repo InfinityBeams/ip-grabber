@@ -8,39 +8,11 @@
  * REGISTER_SECRET
  */
 
-const IP_ADDRESSES = [
-  "203.0.113.77",
-  "198.51.100.42",
-  "192.0.2.123",
-  "203.0.113.184",
-  "198.51.100.88"
-];
-
 /* =========================
-   SLASH COMMANDS
+   SLASH COMMAND
 ========================= */
 
 const COMMANDS = [
-  {
-    name: "ip",
-    description: "IP utility commands",
-    options: [
-      {
-        type: 1,
-        name: "grabber",
-        description: "Grab an IP address for a selected user",
-        options: [
-          {
-            type: 6,
-            name: "user",
-            description: "Choose a user",
-            required: true
-          }
-        ]
-      }
-    ]
-  },
-
   {
     name: "buttonraid",
     description: "Create a button that sends a message",
@@ -59,10 +31,6 @@ const COMMANDS = [
 /* =========================
    HELPERS
 ========================= */
-
-function randomItem(array) {
-  return array[Math.floor(Math.random() * array.length)];
-}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -90,14 +58,16 @@ function hexToUint8Array(hex) {
   return bytes;
 }
 
-async function verifyDiscordRequest(request, env) {
-  const signature = request.headers.get(
-    "X-Signature-Ed25519"
-  );
+/* =========================
+   DISCORD SIGNATURE VERIFY
+========================= */
 
-  const timestamp = request.headers.get(
-    "X-Signature-Timestamp"
-  );
+async function verifyDiscordRequest(request, env) {
+  const signature =
+    request.headers.get("X-Signature-Ed25519");
+
+  const timestamp =
+    request.headers.get("X-Signature-Timestamp");
 
   if (
     !signature ||
@@ -107,25 +77,31 @@ async function verifyDiscordRequest(request, env) {
     return false;
   }
 
-  const body = await request.clone().text();
+  const body =
+    await request.clone().text();
 
   try {
-    const publicKey = await crypto.subtle.importKey(
-      "raw",
-      hexToUint8Array(env.DISCORD_PUBLIC_KEY),
-      {
-        name: "Ed25519",
-        namedCurve: "Ed25519"
-      },
-      false,
-      ["verify"]
-    );
+    const publicKey =
+      await crypto.subtle.importKey(
+        "raw",
+        hexToUint8Array(
+          env.DISCORD_PUBLIC_KEY
+        ),
+        {
+          name: "Ed25519",
+          namedCurve: "Ed25519"
+        },
+        false,
+        ["verify"]
+      );
 
     return await crypto.subtle.verify(
       "Ed25519",
       publicKey,
       hexToUint8Array(signature),
-      new TextEncoder().encode(timestamp + body)
+      new TextEncoder().encode(
+        timestamp + body
+      )
     );
   } catch (error) {
     console.error(
@@ -138,7 +114,7 @@ async function verifyDiscordRequest(request, env) {
 }
 
 /* =========================
-   COMMAND REGISTRATION
+   REGISTER COMMAND
 ========================= */
 
 async function registerCommands(env) {
@@ -168,7 +144,8 @@ async function registerCommands(env) {
     }
   );
 
-  const result = await response.text();
+  const result =
+    await response.text();
 
   if (!response.ok) {
     throw new Error(
@@ -180,7 +157,7 @@ async function registerCommands(env) {
 }
 
 /* =========================
-   BUTTON MESSAGE ENCODING
+   MESSAGE ENCODING
 ========================= */
 
 function encodeMessage(message) {
@@ -193,7 +170,9 @@ function encodeMessage(message) {
 
 function decodeMessage(encoded) {
   return decodeURIComponent(
-    escape(atob(encoded))
+    escape(
+      atob(encoded)
+    )
   );
 }
 
@@ -203,27 +182,28 @@ function decodeMessage(encoded) {
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
+    const url =
+      new URL(request.url);
 
-    /* -------------------------
+    /* =========================
        HEALTH CHECK
-    ------------------------- */
+    ========================= */
 
     if (
       request.method === "GET" &&
       url.pathname === "/"
     ) {
       return new Response(
-        "IP Grabber Worker is online.",
+        "Discord Worker is online.",
         {
           status: 200
         }
       );
     }
 
-    /* -------------------------
-       REGISTER COMMANDS
-    ------------------------- */
+    /* =========================
+       REGISTER COMMAND
+    ========================= */
 
     if (
       request.method === "GET" &&
@@ -234,7 +214,8 @@ export default {
 
       if (
         env.REGISTER_SECRET &&
-        registerSecret !== env.REGISTER_SECRET
+        registerSecret !==
+          env.REGISTER_SECRET
       ) {
         return new Response(
           "Unauthorized",
@@ -248,7 +229,7 @@ export default {
         await registerCommands(env);
 
         return new Response(
-          "Slash commands registered successfully.",
+          "Slash command registered successfully.",
           {
             status: 200
           }
@@ -263,9 +244,9 @@ export default {
       }
     }
 
-    /* -------------------------
+    /* =========================
        DISCORD INTERACTIONS
-    ------------------------- */
+    ========================= */
 
     if (
       request.method === "POST" &&
@@ -300,157 +281,95 @@ export default {
       }
 
       /* =========================
-         SLASH COMMANDS
+         /buttonraid
+      ========================= */
+
+      if (
+        interaction.type === 2 &&
+        interaction.data?.name ===
+          "buttonraid"
+      ) {
+        const messageOption =
+          interaction.data.options?.find(
+            option =>
+              option.type === 3 &&
+              option.name === "message"
+          );
+
+        const message =
+          messageOption?.value;
+
+        if (!message) {
+          return json({
+            type: 4,
+
+            data: {
+              content:
+                "Please provide a message.",
+              flags: 64
+            }
+          });
+        }
+
+        const encoded =
+          encodeMessage(message);
+
+        /*
+         * flags: 64 =
+         * only the command user can see
+         * the button panel.
+         */
+
+        return json({
+          type: 4,
+
+          data: {
+            flags: 64,
+
+            embeds: [
+              {
+                title:
+                  "📨 Message Button",
+
+                description:
+                  "Click the button below to send the message.",
+
+                color: 5793266
+              }
+            ],
+
+            components: [
+              {
+                type: 1,
+
+                components: [
+                  {
+                    type: 2,
+
+                    style: 1,
+
+                    label:
+                      "Send Message",
+
+                    emoji: {
+                      name: "📨"
+                    },
+
+                    custom_id:
+                      `buttonraid:${encoded}`
+                  }
+                ]
+              }
+            ]
+          }
+        });
+      }
+
+      /* =========================
+         UNKNOWN SLASH COMMAND
       ========================= */
 
       if (interaction.type === 2) {
-        const commandName =
-          interaction.data?.name;
-
-        /* -------------------------
-           /ip
-        ------------------------- */
-
-        if (commandName === "ip") {
-          const subcommand =
-            interaction.data.options?.find(
-              option =>
-                option.type === 1 &&
-                option.name === "grabber"
-            );
-
-          if (!subcommand) {
-            return json({
-              type: 4,
-              data: {
-                content:
-                  "Please use `/ip grabber`."
-              }
-            });
-          }
-
-          const userOption =
-            subcommand.options?.find(
-              option =>
-                option.type === 6 &&
-                option.name === "user"
-            );
-
-          const targetUserId =
-            userOption?.value;
-
-          if (!targetUserId) {
-            return json({
-              type: 4,
-              data: {
-                content:
-                  "Please select a user."
-              }
-            });
-          }
-
-          const ip =
-            randomItem(IP_ADDRESSES);
-
-          return json({
-            type: 4,
-
-            data: {
-              embeds: [
-                {
-                  title: "🔍 IP Grabber",
-
-                  description:
-                    `**Target:** <@${targetUserId}>\n` +
-                    `**IP Address:** \`${ip}\`\n\n` +
-                    "✅ IP successfully grabbed!",
-
-                  color: 5793266
-                }
-              ],
-
-              allowed_mentions: {
-                users: []
-              }
-            }
-          });
-        }
-
-        /* -------------------------
-           /buttonraid
-        ------------------------- */
-
-        if (commandName === "buttonraid") {
-          const messageOption =
-            interaction.data.options?.find(
-              option =>
-                option.type === 3 &&
-                option.name === "message"
-            );
-
-          const message =
-            messageOption?.value;
-
-          if (!message) {
-            return json({
-              type: 4,
-              data: {
-                content:
-                  "Please provide a message."
-              }
-            });
-          }
-
-          /*
-           * Discord custom_id max = 100 chars.
-           * The command limits the message to 60
-           * characters so the encoded value fits.
-           */
-
-          const encoded =
-            encodeMessage(message);
-
-          return json({
-            type: 4,
-
-            data: {
-              embeds: [
-                {
-                  title: "📨 Message Button",
-
-                  description:
-                    "Click the button below to send the message.",
-
-                  color: 5793266
-                }
-              ],
-
-              components: [
-                {
-                  type: 1,
-
-                  components: [
-                    {
-                      type: 2,
-
-                      style: 1,
-
-                      label: "Send Message",
-
-                      emoji: {
-                        name: "📨"
-                      },
-
-                      custom_id:
-                        `buttonraid:${encoded}`
-                    }
-                  ]
-                }
-              ]
-            }
-          });
-        }
-
         return json({
           type: 4,
 
@@ -462,7 +381,7 @@ export default {
       }
 
       /* =========================
-         BUTTON INTERACTIONS
+         BUTTON CLICK
       ========================= */
 
       if (interaction.type === 3) {
@@ -483,6 +402,11 @@ export default {
           try {
             const message =
               decodeMessage(encoded);
+
+            /*
+             * No flags: 64 here.
+             * Therefore this message is PUBLIC.
+             */
 
             return json({
               type: 4,
@@ -520,6 +444,10 @@ export default {
         }
       );
     }
+
+    /* =========================
+       NOT FOUND
+    ========================= */
 
     return new Response(
       "Not found",
